@@ -1,0 +1,131 @@
+python 基础知识
+
+    python正则表达式记忆：
+        re.match(pattern,string,flags) 从字符串起始位置匹配一个模式，如果不是起始位置匹配成功则返回none
+        re.search(pattern,string,flags) 扫描整个字符串并返回第一个成功的匹配
+        re.sub(pattern,repl,stirng,count=0,flags=0)
+            pattern 匹配的模式
+            repl 替换的字符串
+            string 原始字符串
+            count 匹配后替换的最大次数，0表示替换所有的匹配
+        re.split(pattern,stirng[,maxsplit=0,flags=0])
+            pattern 匹配的正则表达式
+            string 原始的字符串
+            maxsplit 分割次数，默认为0不限制次数
+        stirng 是有方法split()方法来对本string进行分割，但是却没有sub方法
+
+    关于python切片：
+        list[::-1] 倒序输出
+    关于python的list集合
+        排序list.sort(cmp=None, key=None, reverse=False)
+            cmp--可选参数，按照该参数的方法进行排序
+            key--主要是用来进行比较的元素，只有一个参数
+            reverse--排序规则，True表示姜旭，False表示升序（默认）
+
+
+第一步：处理语料库
+    word2index = {},记录单词索引位置
+    word2count = {}，记录单词出现的次数
+    index2word = {}，用index来标记字词
+
+    通过正则表达式来实现：小写、收尾空格去除、非字母去除
+    s = unicodeToAscii(s.lower().strip())   将Unicode 编码转换成ASCII
+    s = re.sub(r"([.!?])", r" \1", s) 这些符号留有空格 例如 hello!->hello ?
+    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s) 去除非字母的字符
+    s = re.sub(r"\s+", r" ", s).strip() 将多个空格变成一个空格，同时去除两边的空格
+    
+    读取语料库
+        读取内容
+        内置函数iter来生成迭代器，来得到pair(question,answer)
+        
+    过滤pair
+        question 的长度和 answer的长度都得是小于 MAX_LENGTH
+  
+第二部：建立模型
+    Encoder
+        Embedding layer
+            Embedding layer 是一個查找表( lookup table )，當輸入字的索引，會回傳它所對應的 word vector ，對於使用 word embedding 是一個非常方便使用的架构。
+        pack_padded_sequence
+            支持batch里的每一个input 和 output 在长度不同的情况下仍能放进一个batch里参加训练
+
+    Attn注意力层
+        for b in range(batch_size):
+            计算解码层每一个输出的分数
+            for i in range(max_len):
+                attn_energies[b, i] = self.score(hidden[:, b], encoder_outputs[i, b].unsqueeze(0))
+            再对计算出来的分数进行归一化，得到最终的分数
+            return F.softmax(attn_energies, dim=1).unsqueeze(1)
+        分数的计算
+                按照不同的计算方法得到的分数
+                def score(self, hidden, encoder_output):
+
+                    if self.method == 'dot':
+                        energy = hidden.squeeze(0).dot(encoder_output.squeeze(0))
+                        return energy
+
+                    elif self.method == 'general':
+                        energy = self.attn(encoder_output)
+                        energy = hidden.squeeze(0).dot(energy.squeeze(0))
+                        return energy
+
+                    elif self.method == 'concat':
+                        energy = self.attn(torch.cat((hidden, encoder_output), 1))
+                        energy = self.v.squeeze(0).dot(energy.squeeze(0))
+                        return energy
+
+    Decoder解码层
+
+
+第三部分：训练
+    def trainIter():
+        1.voc, pairs = loadPrepareData(corpus),得到词汇和语句对
+            a) 在loadPrepareData 函数里先判断有没有加载过，如果有则直接加载文件即可，如果没有，则需要使用prepareData方法来进行创建词汇和语句对
+            b) 在prepareData 函数里先通过readVocs函数创建一个只包含特殊符号"EOS_TOKEN","SOS_TOKEN","PAD_TOKEN"的空白词汇库和一个[[question1,answer1],[question2,answer2],...]的pairs
+               然后对pairs通过filterPairs函数进行过滤，保证每一个question和answer的长度都小于MAX_LENGTH.然后遍历pairs，向空白voc里面添加pairs
+                   for pair in pairs:
+                        voc.addSentence(pair[0])
+                        voc.addSentence(pair[1])
+        2.根据语料库全路径得到语料库的文件名
+        3.得到训练数据 training_batches：training_batches = [batch2TrainData(voc, [random.choice(pairs) for _ in range(batch_size)], reverse) for _ in range(n_iteration)]
+            a) 函数 def batch2TrainData(voc, pair_batch, reverse):
+                        I）如果reverse为true,则讲pair变为[answer,question]
+                        II) 按照question的长度进行排序（从大到小记性排序）
+                        III) 将pairs分为input_batch:['question1','question2',...] 和 output_batch:['answer1','answer2',...]
+                        IIII) 将句子转换成index表示 inputVal outputVal
+                            inputVal
+                                将input 转换成用index表示 [[x1,x2,x3,x4],[y1,y2,y3,y4],...],在转换的时候每个句子的后面就已经加上了EOS_TOKEN标记
+                                记录下输入集中每一个sentence的长度[len1,len2,len3,...]
+                                将每个输入句子的长度变为一致，如果不够则使用fill_value来代替. 变为input_val [[x1,y1],[x2,y2],...]
+                                返回 input_val(tensor,shape:max_length*batch_size) 和 length
+
+                            outputVal
+                                首先将output转换成用index表示[[o11,o12,o13],[o21,o22,o23,o24],...]，在转换的时候每个句子的后面就已经加上了EOS_TOKEN标记
+                                得到最大的句子长度 max_length
+                                每个输入句子的长度一致，补齐
+                                创建一个标志位矩阵（二维矩阵），如果不是pad_val则元素为0，否则元素为1
+                                输出 ouput_val(tensor,shape:max_length*batch__size)和标志位pad_val以及最大长度length
+            training_batches = [batch1,batch2,batch3,....,batchn]
+            batch1 = (inp(tensor,shape=(max_length*batch_size)),
+                        lengths(list,size=batch_size),
+                        output(tensor,shape=(max_length*batch_size),
+                        mask(矩阵，shape=(max_length*batch_size),
+                        max_target_len（输出最大长度）)
+        4.开始训练
+            定义一个emvedding层，input_size=voc.n_words(词典的个数)，embedding_dim=hidden_size
+            将每一个iteration的training_batches放入train方法中。
+            def train(input_variable, lengths, target_variable, mask, max_target_len, encoder,
+                     decoder, embedding, encoder_optimizer, decoder_optimizer, batch_size)
+
+                 a)Encoder 编码层
+                    embedding层，输入向量是 input_seq(tensor,shape=(seq_length*batch)),输出向量是 embeded(tensor,shape=(seq_length*batch_size*embedded_dim)
+                    将embedded向量通过pack_padded_sequence进行压缩，得到压缩对象packed，
+                    进入RNN神经网络层，输入向量为packed,初始hidden = None,得到 ouput(tensor,shape=(seq_length*batch_size,*(n_dir*hidden_size))),hidden（tensor,shape=(n_dir*batch_size*hidden)
+                    输出outputs和hidden
+                 b)attn注意力层
+
+
+
+
+
+
+
